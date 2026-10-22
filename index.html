@@ -25,6 +25,13 @@
   This tool needs Chrome or Edge on a computer. Please open this page in one of those.
 </div>
 
+<h2>Step 0: Install the driver (one time)</h2>
+<p class="note">Your castle uses a CH340 chip. Install its driver before you connect the castle, then restart the computer.</p>
+<ul class="note">
+  <li>Windows: <a href="http://www.wch-ic.com/downloads/CH341SER_ZIP.html" target="_blank" rel="noopener">download the CH340 driver</a></li>
+  <li>Mac: <a href="http://www.wch-ic.com/downloads/CH341SER_ZIP.html" target="_blank" rel="noopener">download the CH340 driver</a>. After installing, open System Settings → Privacy &amp; Security and click <strong>Allow</strong> if the driver is blocked. Then restart.</li>
+</ul>
+
 <h2>Step 1: Connect the castle</h2>
 <p class="note">Plug the castle into this computer with a USB cable, then press the button below.</p>
 <button id="btnConnect">Connect to castle</button>
@@ -38,7 +45,7 @@
 <button id="btnFlash" disabled>Install castle software</button>
 
 <h2>Messages</h2>
-<div id="log" class="log">Ready. Start with Step 1.</div>
+<div id="log" class="log">Ready. If this is your first time, start with Step 0.</div>
 
 <script>
   const $ = (id) => document.getElementById(id);
@@ -47,30 +54,50 @@
   const btnCheck = $("btnCheck");
   const btnFlash = $("btnFlash");
 
+  // Firmware file and flash settings for this castle
+  const CASTLE = { label: "ESP8266", file: "firmware.bin", address: 0x0, flashFreq: "80m" };
+
   let port = null;
 
   const setLog = (msg) => { logEl.textContent = msg; };
   const addLog = (msg) => { logEl.textContent += "\n" + msg; logEl.scrollTop = logEl.scrollHeight; };
 
   function setBusy(busy) {
-    btnConnect.disabled = busy || !("serial" in navigator);
+    const hasSerial = "serial" in navigator;
+    btnConnect.disabled = busy || !hasSerial;
     btnCheck.disabled = busy || !port;
     btnFlash.disabled = busy || !port;
   }
 
   if (!("serial" in navigator)) {
     $("browserWarn").hidden = false;
-    setBusy(false);
   }
 
-  // Step 1: choose the castle's USB port
+  async function closePort() {
+    try { await port.close(); } catch (e) { /* already closed */ }
+  }
+
+  // Step 1: choose the castle's USB port and confirm the driver is working
   btnConnect.onclick = async () => {
     try {
       port = await navigator.serial.requestPort();
-      setLog("Castle selected.\nNext, press Check castle, or Install castle software if we asked you to.");
+
+      // Identify the USB chip so we can confirm the right driver is working
+      const info = port.getInfo ? port.getInfo() : {};
+      const knownChip = info.usbVendorId === 0x1A86 ? "CH340"
+        : info.usbVendorId === 0x10C4 ? "CP210x"
+        : null;
+      const driverMsg = knownChip
+        ? "Castle found (" + knownChip + " chip). The driver is working."
+        : "Castle found, but its USB chip is not one this tool expects. Please contact us.";
+
+      setLog(driverMsg + "\nNext, press Check castle, or Install castle software if we asked you to.");
       setBusy(false);
     } catch (e) {
-      setLog("No castle selected. Make sure it is plugged in with a data USB cable, then try again.");
+      setLog("No castle found.\n\n" +
+        "1. Make sure the castle is plugged in with a data USB cable.\n" +
+        "2. Make sure the CH340 driver is installed (Step 0), then restart the computer.\n" +
+        "3. Click Connect to castle again.");
     }
   };
 
@@ -118,19 +145,15 @@
     setBusy(false);
   };
 
-  async function closePort() {
-    try { await port.close(); } catch (e) { /* already closed */ }
-  }
-
   // Step 3: install the castle software from firmware.bin, which must sit next to this page
   btnFlash.onclick = async () => {
     if (!port) return;
     setBusy(true);
     try {
       setLog("Getting the castle software file...");
-      const resp = await fetch("firmware.bin", { cache: "no-store" });
+      const resp = await fetch(CASTLE.file, { cache: "no-store" });
       if (!resp.ok) {
-        throw new Error("The software file (firmware.bin) was not found on this website.");
+        throw new Error("The software file (" + CASTLE.file + ") was not found on this website.");
       }
       const data = new Uint8Array(await resp.arrayBuffer());
       addLog("Software file ready (" + data.length + " bytes).");
@@ -152,13 +175,20 @@
 
       addLog("Connecting to the castle...");
       const chip = await loader.main();
+
+      // Stop if this is not the expected castle board, so nothing is written to the wrong board
+      if (!String(chip).toUpperCase().includes(CASTLE.label)) {
+        await transport.disconnect();
+        throw new Error("This board is " + chip + ", which is not the castle board this tool installs. Please contact us.");
+      }
+
       addLog("Connected to " + chip + ". Installing. Do not unplug the castle.");
 
       await loader.writeFlash({
-        fileArray: [{ data, address: 0x0 }],   // ESP8266 application starts at address 0
+        fileArray: [{ data, address: CASTLE.address }],
         flashSize: "4MB",
         flashMode: "dio",
-        flashFreq: "80m",
+        flashFreq: CASTLE.flashFreq,
         eraseAll: false,                        // keeps saved settings and ride files
         compress: true,
         reportProgress: (_file, written, total) => {
@@ -176,6 +206,8 @@
     }
     setBusy(false);
   };
+
+  setBusy(false);
 </script>
 </body>
 </html>
