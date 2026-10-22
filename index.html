@@ -38,7 +38,8 @@
 <button id="btnConnect">Connect to castle</button>
 
 <h2>Step 2: Check the castle</h2>
-<p class="note">Press the button, then press the reset button on the castle (or unplug it and plug it back in). Messages from the castle will appear below.</p>
+<p class="note">Click the button below. The page listens for 10 seconds and shows any messages the castle sends.</p>
+<p class="note">You may need to repeat this step up to 4 times to catch any messages the castle sends. Keep the castle connected the whole time.</p>
 <button id="btnCheck" disabled>Check castle (10 seconds)</button>
 
 <h2>Step 3: Install the castle software</h2>
@@ -112,7 +113,7 @@
   btnCheck.onclick = async () => {
     if (!port) return;
     setBusy(true);
-    setLog("Listening for 10 seconds...\nNow press reset on the castle (or unplug it and plug it back in).");
+    setLog("Listening for 10 seconds...");
     let text = "";
     let reader = null;
     try {
@@ -140,10 +141,9 @@
 
     if (text.trim() === "") {
       setLog(
-        "The castle sent no messages.\n\n" +
-        "This usually means it is not getting power or its main board has failed.\n" +
-        "Try a different USB cable and a phone charger, then check again.\n" +
-        "If it still shows nothing, please contact us and say: 'No messages on check.'"
+        "The castle has sent no messages so far.\n\n" +
+        "Repeat Step 2 up to 4 times to catch any messages it may send.\n" +
+        "If it still sends nothing after 4 tries, please contact us and say: 'No messages on check.'"
       );
     } else {
       setLog("The castle is sending messages:\n\n" + text.slice(-2000) +
