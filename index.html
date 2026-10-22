@@ -11,6 +11,7 @@
   h2 { font-size: 18px; margin: 22px 0 6px; }
   button { font-size: 18px; width: 100%; padding: 14px; margin: 6px 0; border: 0; border-radius: 8px; background: #1d4ed8; color: #fff; cursor: pointer; }
   button:disabled { background: #9ca3af; cursor: not-allowed; }
+  button.danger { background: #b91c1c; }
   .note { font-size: 14px; opacity: 0.85; margin: 4px 0; }
   .warn { background: #fef3c7; color: #111; padding: 10px; border-radius: 8px; margin: 10px 0; }
   .log { background: #f3f4f6; color: #111; border-radius: 8px; padding: 12px; white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 14px; min-height: 90px; overflow-wrap: anywhere; }
@@ -44,6 +45,10 @@
 <p class="note">Only do this if we asked you to, or if the check showed no messages. Do not unplug the castle during this step.</p>
 <button id="btnFlash" disabled>Install castle software</button>
 
+<h2>Last resort: Erase everything</h2>
+<p class="note">Use this only if we asked you to. It deletes all saved settings, Wi-Fi details, and ride names from the castle. After it finishes, you must do Step 3 again to install the castle software.</p>
+<button id="btnErase" class="danger" disabled>Erase everything</button>
+
 <h2>Messages</h2>
 <div id="log" class="log">Ready. If this is your first time, start with Step 0.</div>
 
@@ -53,6 +58,7 @@
   const btnConnect = $("btnConnect");
   const btnCheck = $("btnCheck");
   const btnFlash = $("btnFlash");
+  const btnErase = $("btnErase");
 
   // Firmware file and flash settings for this castle
   const CASTLE = { label: "ESP8266", file: "firmware.bin", address: 0x0, flashFreq: "80m" };
@@ -67,6 +73,7 @@
     btnConnect.disabled = busy || !hasSerial;
     btnCheck.disabled = busy || !port;
     btnFlash.disabled = busy || !port;
+    btnErase.disabled = busy || !port;
   }
 
   if (!("serial" in navigator)) {
@@ -202,6 +209,45 @@
     } catch (e) {
       setLog("Install did not finish: " + e.message +
         "\n\nClick Connect to castle again, then Install castle software. If it says it could not connect, unplug the castle, press and hold its button, plug it in while holding, then release. Then start again from Step 1.");
+      port = null;
+    }
+    setBusy(false);
+  };
+
+  // Last resort: erase the whole flash memory (settings, Wi-Fi, ride names)
+  btnErase.onclick = async () => {
+    if (!port) return;
+    const sure = confirm("This erases ALL settings from the castle, including Wi-Fi and ride names. Only continue if we asked you to. Are you sure?");
+    if (!sure) return;
+
+    setBusy(true);
+    try {
+      setLog("Erasing... Do not unplug the castle.");
+      const { ESPLoader, Transport } = await import("https://unpkg.com/esptool-js@0.6.0/bundle.js");
+
+      await closePort();
+      const transport = new Transport(port, true);
+      const loader = new ESPLoader({
+        transport,
+        baudrate: 115200,
+        terminal: { clean: () => {}, writeLine: () => {}, write: () => {} },
+      });
+
+      const chip = await loader.main();
+      if (!String(chip).toUpperCase().includes(CASTLE.label)) {
+        await transport.disconnect();
+        throw new Error("This board is " + chip + ", which is not the castle board this tool supports. Please contact us.");
+      }
+
+      await loader.eraseFlash();
+      await loader.after("hard_reset");
+      await transport.disconnect();
+
+      port = null;  // force a fresh Connect before the install
+      setLog("Erase finished.\n\nNext: click Connect to castle, then do Step 3 (Install castle software). The castle needs its software again before it will work.");
+    } catch (e) {
+      setLog("Erase did not finish: " + e.message +
+        "\n\nClick Connect to castle again and try once more. If it still fails, unplug the castle, press and hold its button, plug it in while holding, then release, and try again.");
       port = null;
     }
     setBusy(false);
