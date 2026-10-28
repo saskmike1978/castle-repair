@@ -12,6 +12,8 @@
   button { font-size: 18px; width: 100%; padding: 14px; margin: 6px 0; border: 0; border-radius: 8px; background: #1d4ed8; color: #fff; cursor: pointer; }
   button:disabled { background: #9ca3af; cursor: not-allowed; }
   button.danger { background: #b91c1c; }
+  input[type=text], input[type=password] { width: 100%; font-size: 18px; padding: 10px; margin: 4px 0 10px; box-sizing: border-box; border-radius: 8px; border: 1px solid #9ca3af; }
+  label { display: block; font-size: 16px; margin-top: 6px; }
   .note { font-size: 14px; opacity: 0.85; margin: 4px 0; }
   .warn { background: #fef3c7; color: #111; padding: 10px; border-radius: 8px; margin: 10px 0; }
   .log { background: #f3f4f6; color: #111; border-radius: 8px; padding: 12px; white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 14px; min-height: 90px; overflow-wrap: anywhere; }
@@ -47,6 +49,17 @@
 <p class="note">Only do this if we asked you to, or if the check showed no messages. Do not unplug the castle during this step.</p>
 <button id="btnFlash" disabled>Install castle software</button>
 
+<h2>Step 4: Set the castle's Wi-Fi</h2>
+<p class="note">Use this if the castle cannot join your Wi-Fi. Type your Wi-Fi name and password exactly as they are on your router (capital letters count). Keep the castle connected while sending. This needs the newest castle software from Step 3.</p>
+<label>Wi-Fi name
+  <input id="wifiSsid" type="text" maxlength="32" autocomplete="off" spellcheck="false">
+</label>
+<label>Wi-Fi password
+  <input id="wifiPass" type="password" maxlength="63" autocomplete="off" spellcheck="false">
+</label>
+<label class="note"><input id="showPass" type="checkbox"> Show password</label>
+<button id="btnWifi" disabled>Send Wi-Fi to castle</button>
+
 <h2>Last resort: Erase everything</h2>
 <p class="note">Use this only if we asked you to. It deletes all saved settings, Wi-Fi details, and ride names from the castle. After it finishes, you must do Step 3 again to install the castle software.</p>
 <button id="btnErase" class="danger" disabled>Erase everything</button>
@@ -61,6 +74,10 @@
   const btnCheck = $("btnCheck");
   const btnFlash = $("btnFlash");
   const btnErase = $("btnErase");
+  const btnWifi = $("btnWifi");
+  const wifiSsid = $("wifiSsid");
+  const wifiPass = $("wifiPass");
+  $("showPass").onchange = () => { wifiPass.type = $("showPass").checked ? "text" : "password"; };
 
   // Firmware file and flash settings for this castle
   const CASTLE = { label: "ESP8266", file: "firmware.bin", address: 0x0, flashFreq: "80m" };
@@ -76,6 +93,7 @@
     btnCheck.disabled = busy || !port;
     btnFlash.disabled = busy || !port;
     btnErase.disabled = busy || !port;
+    btnWifi.disabled = busy || !port;
   }
 
   if (!("serial" in navigator)) {
@@ -249,6 +267,61 @@
     } catch (e) {
       setLog("Erase did not finish: " + e.message +
         "\n\nClick Connect to castle again and try once more. If it still fails, unplug the castle, press and hold its button, plug it in while holding, then release, and try again.");
+      port = null;
+    }
+    setBusy(false);
+  };
+
+  // Step 4: send the Wi-Fi name and password to the castle over USB
+  btnWifi.onclick = async () => {
+    if (!port) return;
+    const ssid = wifiSsid.value;
+    const pass = wifiPass.value;
+    if (ssid.length < 1 || ssid.length > 32 || /[|\r\n]/.test(ssid)) {
+      setLog("Wi-Fi name must be 1 to 32 characters and cannot contain the | symbol.");
+      return;
+    }
+    if (pass.length > 0 && (pass.length < 8 || pass.length > 63)) {
+      setLog("Wi-Fi password must be 8 to 63 characters (or empty for an open network).");
+      return;
+    }
+    setBusy(true);
+    setLog("Sending Wi-Fi to the castle. Keep it connected...");
+    let reader = null;
+    try {
+      await port.open({ baudRate: 115200 });
+      const writer = port.writable.getWriter();
+      await writer.write(new TextEncoder().encode("WIFI|" + ssid + "|" + pass + "\n"));
+      writer.releaseLock();
+
+      reader = port.readable.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      const timer = setTimeout(() => reader.cancel(), 30000);
+      try {
+        while (!/WIFI:(OK|FAIL)/.test(buf)) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+        }
+      } finally {
+        clearTimeout(timer);
+        reader.releaseLock();
+      }
+      await closePort();
+
+      if (buf.includes("WIFI:OK")) {
+        setLog("Done! The castle saved the Wi-Fi and connected.\n\nGive it up to a minute, then check the castle's screens. Both screens should show wait times.");
+      } else if (buf.includes("WIFI:FAIL:connect")) {
+        setLog("The castle saved the Wi-Fi details but could not connect.\n\nCheck the Wi-Fi name and password (capital letters count), then send them again.");
+      } else if (buf.includes("WIFI:FAIL")) {
+        setLog("The castle did not accept those details. Check the Wi-Fi name (up to 32 characters) and password (8 to 63 characters), then try again.");
+      } else {
+        setLog("The castle did not reply.\n\nIt may need the newest software. Do Step 3 first, then send the Wi-Fi again.");
+      }
+    } catch (e) {
+      setLog("Could not send the Wi-Fi details: " + e.message + "\nClick Connect to castle again, then try once more.");
+      await closePort();
       port = null;
     }
     setBusy(false);
